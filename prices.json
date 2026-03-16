@@ -1,0 +1,21 @@
+{
+  "updated": "16 Mar 2026, 10:00",
+  "updated_iso": "2026-03-16T10:00:00",
+  "mol": {
+    "price95": 8.57,
+    "price100": 9.30,
+    "source": "plinul.ro"
+  },
+  "romp": {
+    "price95": 8.63,
+    "price100": 9.12,
+    "source": "plinul.ro"
+  },
+  "omv": {
+    "price95": 8.57,
+    "price100": 9.30,
+    "source": "plinul.ro"
+  },
+  "cheapest": "mol",
+  "min_price": 8.57
+}
