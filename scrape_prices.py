@@ -3,10 +3,9 @@ import re
 import urllib.request
 from datetime import datetime
 
-URLS = [
-    "https://plinul.ro/benzinarii/floresti-cluj",
-    "https://peko.ro/benzinarii/cj/cluj-napoca/mol-cluj-napoca-5-calea-turzii",
-]
+# Preturile realiste incepand cu 2024 — orice sub MIN_PRICE e date vechi si se ignora
+MIN_PRICE = 7.50
+MAX_PRICE = 15.0
 
 FALLBACK = {
     "mol":  {"price95": 8.57, "price100": 9.30},
@@ -14,87 +13,98 @@ FALLBACK = {
     "omv":  {"price95": 8.57, "price100": 9.30},
 }
 
+PEKO_URLS = {
+    "mol":  "https://peko.ro/benzinarii/cj/cluj-napoca/mol-cluj-napoca-5-calea-turzii",
+    "romp": "https://peko.ro/benzinarii/cj/cluj-napoca/rompetrol-cluj-5-vuia",
+    "omv":  "https://peko.ro/benzinarii/cj/cluj-napoca/omv-manastur-omv-ro",
+}
+
 def fetch(url):
-    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    req = urllib.request.Request(url, headers={
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+    })
     with urllib.request.urlopen(req, timeout=15) as r:
         return r.read().decode("utf-8")
 
-def parse_plinul(html):
-    """Parse plinul.ro/benzinarii/floresti-cluj table rows."""
+def parse_peko_price(html):
+    """
+    Parse a peko.ro station page for benzina 95 and premium prices.
+    Extracts all valid prices >= MIN_PRICE from the table, takes first two.
+    """
+    prices = re.findall(r'([\d]+[.,][\d]+)\s*Lei', html, re.IGNORECASE)
+    valid = []
+    for p in prices:
+        val = float(p.replace(",", "."))
+        if MIN_PRICE < val < MAX_PRICE:
+            valid.append(val)
+
+    price95  = valid[0] if len(valid) >= 1 else None
+    price100 = valid[1] if len(valid) >= 2 else None
+    return price95, price100
+
+def parse_plinul_fallback(html):
+    """
+    Secondary: parse plinul.ro — only rows with dates from 2025/2026 and price >= MIN_PRICE.
+    """
     results = {}
-    # Look for price patterns near station names
-    # MOL on Avram Iancu
-    mol = re.search(r'MOL.*?Avram Iancu.*?BENZINA EVO 95.*?([\d]+[.,][\d]+)\s*lei', html, re.DOTALL | re.IGNORECASE)
-    romp = re.search(r'Rompetrol.*?DN1.*?Efix Benzina 95.*?([\d]+[.,][\d]+)\s*lei', html, re.DOTALL | re.IGNORECASE)
-    omv = re.search(r'OMV.*?Luna de Sus.*?MaxxMotion 95.*?([\d]+[.,][\d]+)\s*lei', html, re.DOTALL | re.IGNORECASE)
-
-    if mol:
-        results["mol"] = float(mol.group(1).replace(",", "."))
-    if romp:
-        results["romp"] = float(romp.group(1).replace(",", "."))
-    if omv:
-        results["omv"] = float(omv.group(1).replace(",", "."))
-
-    # Fallback: grab all prices from table rows with network names
-    if not results:
-        rows = re.findall(r'(MOL|Rompetrol|OMV).*?([\d]{1}[.,][\d]{2})\s*lei.*?(\d{1,2}\s*\w+\s*\d{4})', html, re.DOTALL | re.IGNORECASE)
-        for row in rows:
-            net = row[0].lower()
-            price = float(row[1].replace(",", "."))
-            if "rompetrol" in net and "romp" not in results:
-                results["romp"] = price
-            elif "mol" in net and "mol" not in results:
-                results["mol"] = price
-            elif "omv" in net and "omv" not in results:
-                results["omv"] = price
-
+    rows = re.findall(
+        r'(MOL|Rompetrol|OMV)[^\n]*?([\d]{1}[.,][\d]{2})\s*lei[^\n]*?(\d{2}\.\d{2}\.202[456])',
+        html, re.IGNORECASE
+    )
+    for row in rows:
+        net   = row[0].lower()
+        price = float(row[1].replace(",", "."))
+        if price < MIN_PRICE or price > MAX_PRICE:
+            continue
+        key = "romp" if "rompetrol" in net else "mol" if "mol" in net else "omv"
+        if key not in results:
+            results[key] = price
     return results
-
-def parse_peko_mol(html):
-    """Parse peko.ro for MOL price as secondary source."""
-    m = re.search(r'BENZINA EVO 95.*?(\d+[.,]\d+)\s*Lei', html, re.DOTALL | re.IGNORECASE)
-    if m:
-        return float(m.group(1).replace(",", "."))
-    return None
 
 def main():
     now = datetime.now()
     output = {
-        "updated": now.strftime("%d %b %Y, %H:%M"),
+        "updated":     now.strftime("%d %b %Y, %H:%M"),
         "updated_iso": now.isoformat(),
         "mol":  {**FALLBACK["mol"],  "source": "fallback"},
         "romp": {**FALLBACK["romp"], "source": "fallback"},
         "omv":  {**FALLBACK["omv"],  "source": "fallback"},
     }
 
-    # Try plinul.ro first
-    try:
-        html = fetch("https://plinul.ro/benzinarii/floresti-cluj")
-        parsed = parse_plinul(html)
-        print(f"plinul.ro parsed: {parsed}")
-        for station in ["mol", "romp", "omv"]:
-            if station in parsed and 6.0 < parsed[station] < 15.0:
-                output[station]["price95"] = parsed[station]
-                output[station]["source"] = "plinul.ro"
-    except Exception as e:
-        print(f"plinul.ro failed: {e}")
-
-    # Try peko.ro for MOL as backup
-    if output["mol"]["source"] == "fallback":
+    # --- Primary source: peko.ro (one page per station) ---
+    for station, url in PEKO_URLS.items():
         try:
-            html2 = fetch("https://peko.ro/benzinarii/cj/cluj-napoca/mol-cluj-napoca-5-calea-turzii")
-            mol_price = parse_peko_mol(html2)
-            if mol_price and 6.0 < mol_price < 15.0:
-                output["mol"]["price95"] = mol_price
-                output["mol"]["source"] = "peko.ro"
-                print(f"peko.ro MOL: {mol_price}")
+            html = fetch(url)
+            p95, p100 = parse_peko_price(html)
+            if p95:
+                output[station]["price95"] = p95
+                output[station]["source"]  = "peko.ro"
+                if p100:
+                    output[station]["price100"] = p100
+                print(f"peko.ro {station}: {p95} / {p100}")
+            else:
+                print(f"peko.ro {station}: no valid price found")
         except Exception as e:
-            print(f"peko.ro failed: {e}")
+            print(f"peko.ro {station} failed: {e}")
 
-    # Determine cheapest
-    prices = {s: output[s]["price95"] for s in ["mol", "romp", "omv"]}
+    # --- Secondary source: plinul.ro (only for stations still on fallback) ---
+    still_fallback = [s for s in ["mol","romp","omv"] if output[s]["source"] == "fallback"]
+    if still_fallback:
+        try:
+            html2  = fetch("https://plinul.ro/benzinarii/floresti-cluj")
+            parsed = parse_plinul_fallback(html2)
+            for station in still_fallback:
+                if station in parsed:
+                    output[station]["price95"] = parsed[station]
+                    output[station]["source"]  = "plinul.ro"
+                    print(f"plinul.ro {station}: {parsed[station]}")
+        except Exception as e:
+            print(f"plinul.ro failed: {e}")
+
+    # --- Determine cheapest ---
+    prices   = {s: output[s]["price95"] for s in ["mol", "romp", "omv"]}
     cheapest = min(prices, key=prices.get)
-    output["cheapest"] = cheapest
+    output["cheapest"]  = cheapest
     output["min_price"] = prices[cheapest]
 
     print(json.dumps(output, indent=2, ensure_ascii=False))
@@ -102,7 +112,7 @@ def main():
     with open("prices.json", "w", encoding="utf-8") as f:
         json.dump(output, f, ensure_ascii=False, indent=2)
 
-    print("✅ prices.json written.")
+    print("prices.json written.")
 
 if __name__ == "__main__":
     main()
