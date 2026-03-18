@@ -1,20 +1,20 @@
 {
-  "updated": "17 Mar 2026, 10:00",
-  "updated_iso": "2026-03-17T10:00:00",
+  "updated": "18 Mar 2026, 07:53",
+  "updated_iso": "2026-03-18T07:53:20.922989",
   "mol": {
     "price95": 8.65,
     "price100": 9.38,
-    "source": "peko.ro"
+    "source": "fallback"
   },
   "romp": {
     "price95": 8.63,
     "price100": 9.12,
-    "source": "peko.ro"
+    "source": "fallback"
   },
   "omv": {
     "price95": 8.57,
-    "price100": 9.30,
-    "source": "peko.ro"
+    "price100": 9.3,
+    "source": "fallback"
   },
   "cheapest": "omv",
   "min_price": 8.57
